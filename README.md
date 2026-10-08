@@ -100,6 +100,17 @@ py -m pytest
 - APIキーは設定ファイルに書かず、環境変数か各CLIのログイン状態を使う。`env` に KEY / TOKEN / SECRET / PASSWORD を含む名前を書くと設定エラーになる。ログ中のキーらしき文字列はマスクする。
 - 運用ログ（ファイル置換のリトライなど）は `games/_logs/ai-othello.log` に残る。
 
+## 汎用AI自動開発ループ（tools/devloop）
+オセロ本体とは別に、実装担当AI（Claude Code）と独立レビュー担当AI（Codex）を交互に動かして、指示書→実装→テスト→レビュー→次の指示書を最大3ループ回すコントローラを `tools/devloop/` に置いている。詳細は [docs/devloop.md](./docs/devloop.md)。
+
+```powershell
+# 計画の確認だけ（既定の dry-run。AIは起動しない）
+py -m tools.devloop.controller --repo . --instruction instructions/Instruction00004.md --config tools/devloop/config.example.yaml
+```
+- 実行には設定の `dry_run: false` と `--execute`、実AIにはさらに `allow_real_cli: true` と `--allow-real` が必要。
+- モックでの閉ループと安全装置はテスト済み。**実際の Claude Code / Codex でのループは未実施**（ユーザーの承認待ち）。
+- コントローラは commit / push をしない。
+
 ## 制限事項
 - 実AI CLIとの接続は未検証（AIへの問い合わせは未実施）。
 - 盤面はプロンプトに埋め込んで渡す方式のみ。CLIのファイル参照を使う方式は未実装。

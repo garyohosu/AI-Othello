@@ -1,0 +1,51 @@
+# devloop 設定例。対象リポジトリの devloop.yaml にコピーして使う（--config でも指定できる）。
+# 既定は安全側: dry_run: true、allow_real_cli: false。
+#
+# 実行の条件:
+#   - 実行（プロセス起動・ファイル書き込み）: dry_run: false かつ --execute
+#   - 実AI（provider: claude / codex）の起動: さらに allow_real_cli: true かつ --allow-real
+# どちらも欠けていれば、計画の表示（dry-run）か approval_required での停止になる。
+
+dry_run: true
+allow_real_cli: false
+
+max_loops: 3              # 1～3。4以上は設定エラー
+max_total_calls: 6        # 実装担当とレビュー担当の呼び出し回数の合計上限
+max_same_failure: 2       # 同じ指摘・同じテスト結果が続いたら停止する回数
+
+instructions_dir: instructions
+state_dir: .devloop       # 状態とログ（.gitignore に入れることを推奨）
+require_clean_worktree: true
+allow_delete: false       # ファイル削除（git status の D / R）を検出したら停止
+# protected_paths:        # 変更を検出したら停止するパス（省略時は依存関係・CI・秘密情報・tools/devloop）
+#   - "requirements*.txt"
+result_required_sections: []   # 結果報告に必ず含まれるべき文字列（例: ["## テスト"]）
+
+# テストコマンド: このファイルに書いたものだけを実行する。シェルは使わない。
+# 実行ファイルは allowed_test_executables に含まれるものだけ（{python} は実行中の Python）。
+test_commands:
+  - ["{python}", "-m", "pytest", "-q"]
+test_timeout_sec: 900
+allowed_test_executables: ["py", "python", "python3", "pytest"]
+
+# 実装担当・レビュー担当
+# command のプレースホルダ: {python} {prompt} {instruction} {result} {repo} {schema_file} {model}
+#   {prompt} がなければプロンプトは標準入力で渡す。.cmd/.bat（npm 製CLI）では {prompt} は使えない。
+#
+# 以下の実CLIのコマンドは、2026-10-08 に --help で存在を確認したオプションだけで組んだ「未検証」の例。
+# 実際に権限が意図どおり制限されるか、出力が期待どおりかは確認していない（Result00003.md 参照）。
+implementer:
+  provider: claude
+  # --tools でファイル操作系の組み込みツールだけに絞る（Bash を含めない＝シェル実行なし。テストはコントローラが実行）
+  command: ["claude", "-p", "{prompt}", "--tools", "Read,Edit,Write,Glob,Grep",
+            "--permission-mode", "acceptEdits", "--permission-prompts", "none",
+            "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"]
+  timeout_sec: 1800
+  note: "未検証。--permission-mode acceptEdits はファイル編集を自動承認する。作業ディレクトリ外への書き込みが防がれるかは未確認"
+
+reviewer:
+  provider: codex
+  command: ["codex", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check",
+            "--color", "never", "--output-schema", "{schema_file}", "-"]
+  timeout_sec: 600
+  note: "未検証。-s read-only（ヘルプ記載）と --output-schema を使う。最終回答だけが標準出力に出るかは未確認"

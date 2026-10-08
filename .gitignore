@@ -14,3 +14,7 @@ __pycache__/
 .venv/
 venv/
 *.tmp
+
+# devloop（tools/devloop）の状態とログ
+.devloop/
+devloop.yaml
