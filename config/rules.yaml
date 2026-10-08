@@ -1,0 +1,7 @@
+# 対局ルール（SPEC.md 6.2）
+foul_limit: 10               # 1局・1プレイヤーあたりの累積反則上限。到達で即反則負け（無限ループ防止）。合法手でリセットしない
+technical_retry_limit: 3     # 1手番あたりの技術エラーのリトライ回数（初回+3回=最大4試行。4回とも失敗で技術中断）
+default_timeout_sec: 120     # 応答タイムアウトの既定値（models.yaml の timeout_sec で上書き可）
+backoff_base_sec: 1          # 技術エラー後の待機: 1→2→4秒…
+backoff_max_sec: 30          # 待機の上限（Retry-After 相当を取得できた場合もこの値で頭打ち）
+games_per_side: 1            # 各組み合わせ・各先後の対局数

@@ -1,0 +1,47 @@
+# モデル設定の例。config/models.yaml にコピーして使う（models.yaml は Git 管理外）。
+# APIキー・認証情報はここに書かない。環境変数または各CLIのログイン状態を使う。
+#
+# 項目:
+#   id             一意のID（英数字と . _ -）
+#   provider       mock | cli
+#   model          CLIに渡すモデル名。command 内の {model} に入る
+#   command        実行コマンドの引数配列。プロンプトは標準入力で渡す
+#                  {python}=実行中のPython、{project}=このリポジトリのルート、{model}=model
+#   timeout_sec    応答タイムアウト（省略時は rules.yaml の default_timeout_sec）
+#   output         text（標準出力全体が回答）| json（json_field の値が回答）
+#   json_field     output: json のとき回答本文のパス（例: result、choices.0.text）
+#   usage_fields   JSONから取り出す付帯情報のパス（actual_model / input_tokens / output_tokens / cost_usd）
+#   version_command  CLIバージョン取得コマンド（課金のない呼び出しのみ）
+#   sandbox        restricted | unrestricted | unknown。restricted 以外は大会に参加できない
+#   sandbox_note   制限方法や制限できない理由のメモ
+#   enabled        false で総当たりの既定対象から外す
+
+models:
+  # --- モック（課金なし。テスト・動作確認用） ---
+  - id: mock-first
+    provider: mock
+    model: first-legal
+    command: ["{python}", "{project}/tests/mock_cli.py", "--actions", "legal"]
+    timeout_sec: 10
+  - id: mock-json
+    provider: mock
+    model: first-legal-json
+    command: ["{python}", "{project}/tests/mock_cli.py", "--actions", "json"]
+    output: json
+    json_field: result
+    usage_fields:
+      actual_model: model
+      input_tokens: usage.input_tokens
+      output_tokens: usage.output_tokens
+      cost_usd: total_cost_usd
+    timeout_sec: 10
+
+  # --- 実CLI（未検証。オプションは各CLIの --help で確認してから有効にする） ---
+  # 以下はテンプレートであり、記載したオプションが実在するかは確認していない。
+  # - id: claude-haiku
+  #   provider: cli
+  #   model: <モデル名>
+  #   command: ["claude", "<非対話実行のオプション>", "--model", "{model}"]
+  #   version_command: ["claude", "--version"]
+  #   sandbox: unknown
+  #   enabled: false

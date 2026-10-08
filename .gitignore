@@ -1,0 +1,16 @@
+# 実行時データ（公開する集計は reports/ に手動でコピーしてコミットする）
+games/
+results/
+
+# 秘密情報を含みうる設定
+config/models.yaml
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.tmp
