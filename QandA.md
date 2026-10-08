@@ -1,7 +1,7 @@
 # QandA（SPEC.md の不明点）
 
 RequiredSpecifications.md から SPEC.md を作成した際に、正本だけでは決められなかった点をまとめる。
-各項目の「暫定」は SPEC.md に仮置きした内容。回答欄が埋まったら SPEC.md に反映し、「暫定」の記載を外す。
+全22項目が回答済みで、SPEC.md v0.2 に反映済み（2026-10-08、instructions/Result00001.md）。
 
 状態: 未回答 / 回答済 / 反映済
 
