@@ -71,6 +71,17 @@ class ModelConfig:
     version_command: list[str] | None = None
     sandbox: str = "unknown"  # restricted | unrestricted | unknown
     sandbox_note: str | None = None
+    env: dict[str, str] = field(default_factory=dict)  # 追加の環境変数（認証情報は不可）
+
+    @property
+    def prompt_via(self) -> str:
+        """プロンプトの渡し方。command 内のプレースホルダで決まる。"""
+        joined = " ".join(self.command)
+        if "{prompt_file}" in joined:
+            return "file"
+        if "{prompt}" in joined:
+            return "arg"
+        return "stdin"
 
     @property
     def is_mock(self) -> bool:
@@ -96,6 +107,18 @@ class ModelConfig:
             raise ConfigError(f"sandbox は {sorted(SANDBOX_VALUES)} のいずれか ({data['id']})")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._\-]*", str(data["id"])):
             raise ConfigError(f"id は英数字と . _ - のみ: {data['id']!r}")
+        joined = " ".join(command)
+        if "{prompt}" in joined and "{prompt_file}" in joined:
+            raise ConfigError(f"{{prompt}} と {{prompt_file}} は同時に使えない ({data['id']})")
+        env = data.get("env") or {}
+        if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+            raise ConfigError(f"env は文字列から文字列への対応にする ({data['id']})")
+        secret_like = [k for k in env if SECRET_ENV_NAME.search(k)]
+        if secret_like:
+            raise ConfigError(
+                f"env に認証情報らしき変数は書かない: {', '.join(secret_like)} ({data['id']})。"
+                "OSの環境変数か各CLIのログイン状態を使う"
+            )
         return cls(
             id=str(data["id"]),
             provider=data["provider"],
@@ -109,6 +132,7 @@ class ModelConfig:
             version_command=data.get("version_command"),
             sandbox=sandbox,
             sandbox_note=data.get("sandbox_note"),
+            env=dict(env),
         )
 
 
@@ -208,23 +232,37 @@ class CliResult:
     retry_after_sec: float | None = None
 
 
-def resolve_command(command: list[str], model: str) -> list[str]:
+def resolve_command(
+    command: list[str],
+    model: str,
+    prompt: str | None = None,
+    prompt_file: str | None = None,
+) -> list[str]:
     """プレースホルダを置換し、実行ファイルを shutil.which で解決する。
 
     Windows の npm 製 CLI は .cmd ラッパーなので、shell=True を使わずに
-    起動するには実体パスへの解決が必要。
+    起動するには実体パスへの解決が必要。.cmd / .bat に {prompt} で
+    プロンプトを引数として渡すと cmd.exe の引数解釈で壊れたり注入の
+    危険があるため拒否する（標準入力か {prompt_file} を使う）。
     """
-    argv = [
-        part.replace("{model}", model)
-        .replace("{python}", sys.executable)
-        .replace("{project}", PROJECT_ROOT)
-        for part in command
-    ]
-    exe = argv[0]
-    resolved = shutil.which(exe)
-    if resolved is None:
-        raise FileNotFoundError(f"コマンドが見つからない: {exe}")
-    return [resolved] + argv[1:]
+    exe = shutil.which(command[0].replace("{python}", sys.executable))
+    if exe is None:
+        raise FileNotFoundError(f"コマンドが見つからない: {command[0]}")
+    if any("{prompt}" in part for part in command[1:]) and os.path.splitext(exe)[1].lower() in (".cmd", ".bat"):
+        raise ConfigError(f"{exe} は .cmd/.bat なので {{prompt}} で引数として渡せない")
+    argv = [exe]
+    for part in command[1:]:
+        part = (
+            part.replace("{model}", model)
+            .replace("{python}", sys.executable)
+            .replace("{project}", PROJECT_ROOT)
+        )
+        if prompt_file is not None:
+            part = part.replace("{prompt_file}", prompt_file)
+        if prompt is not None:
+            part = part.replace("{prompt}", prompt)
+        argv.append(part)
+    return argv
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -248,10 +286,18 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         pass
 
 
-def run_cli(argv: list[str], stdin_text: str, timeout_sec: float, cwd: str | None = None) -> CliResult:
-    """CLIを1回実行する。プロンプトは標準入力で渡す。"""
+def run_cli(
+    argv: list[str],
+    stdin_text: str,
+    timeout_sec: float,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> CliResult:
+    """CLIを1回実行する。stdin_text を標準入力に渡す（空なら空入力）。"""
     start = time.monotonic()
     kwargs: dict[str, Any] = {}
+    if env:
+        kwargs["env"] = {**os.environ, **env}
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
@@ -307,6 +353,7 @@ class Attempt:
     retry_after_sec: float | None = None
     meta: dict[str, Any] = field(default_factory=dict)
     board_delivery: str = "inline"
+    prompt_via: str = "stdin"
 
 
 class AIPlayer:
@@ -328,29 +375,39 @@ class AIPlayer:
         if self.cfg.version_command:
             try:
                 argv = resolve_command(self.cfg.version_command, self.cfg.model)
-                res = run_cli(argv, "", 30, cwd=self.cwd)
+                res = run_cli(argv, "", 30, cwd=self.cwd, env=self.cfg.env)
                 if res.error_type is None:
                     version = (res.stdout.strip() or res.stderr.strip()).splitlines()[0][:200] or None
-            except (FileNotFoundError, IndexError):
+            except (FileNotFoundError, IndexError, ConfigError):
                 version = None
         self._cli_version = version
         return version
 
     def ask(self, board_text: str, color: str) -> Attempt:
         prompt = build_prompt(board_text, color)
+        via = self.cfg.prompt_via
+        prompt_file = None
+        if via == "file":
+            # 作業ディレクトリ（対局ごとの workdir）にプロンプトを書いて渡す
+            prompt_file = os.path.abspath(os.path.join(self.cwd or ".", "prompt.txt"))
+            with open(prompt_file, "w", encoding="utf-8", newline="\n") as f:
+                f.write(prompt)
         try:
-            argv = resolve_command(self.cfg.command, self.cfg.model)
-        except FileNotFoundError as exc:
-            return Attempt(prompt, "", "", None, 0.0, None, LAUNCH, str(exc))
-        res = run_cli(argv, prompt, self.timeout_sec, cwd=self.cwd)
+            argv = resolve_command(self.cfg.command, self.cfg.model, prompt=prompt, prompt_file=prompt_file)
+        except (FileNotFoundError, ConfigError) as exc:
+            return Attempt(prompt, "", "", None, 0.0, None, LAUNCH, str(exc), prompt_via=via)
+        stdin_text = prompt if via == "stdin" else ""
+        res = run_cli(argv, stdin_text, self.timeout_sec, cwd=self.cwd, env=self.cfg.env)
         stdout = mask_secrets(res.stdout) or ""
         stderr = mask_secrets(res.stderr) or ""
         if res.error_type:
             return Attempt(
                 prompt, stdout, stderr, res.exit_code, res.elapsed_sec, None,
-                res.error_type, res.error_detail, res.retry_after_sec,
+                res.error_type, res.error_detail, res.retry_after_sec, prompt_via=via,
             )
         ext = extract_body(res.stdout, self.cfg)
         if ext.body is None:
-            return Attempt(prompt, stdout, stderr, res.exit_code, res.elapsed_sec, None, PARSE, ext.error)
-        return Attempt(prompt, stdout, stderr, res.exit_code, res.elapsed_sec, ext.body, meta=ext.meta)
+            return Attempt(prompt, stdout, stderr, res.exit_code, res.elapsed_sec, None, PARSE, ext.error,
+                           prompt_via=via)
+        return Attempt(prompt, stdout, stderr, res.exit_code, res.elapsed_sec, ext.body, meta=ext.meta,
+                       prompt_via=via)

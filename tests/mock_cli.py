@@ -17,6 +17,10 @@
   auth      認証エラーのメッセージを出して終了コード 1
   sleep     --seconds 秒待ってから合法手
   answer:X  X をそのまま出力
+  env:NAME  環境変数 NAME の値を出力
+
+プロンプトは既定で標準入力から読む。--prompt-file / --prompt を指定した場合は
+そちらから読む（実CLIのファイル渡し・引数渡しの再現用）。
 """
 
 from __future__ import annotations
@@ -32,8 +36,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import game  # noqa: E402
 
 
-def read_prompt() -> tuple[game.Board, str]:
-    text = sys.stdin.read()
+def read_prompt(prompt_file: str | None, prompt_arg: str | None) -> tuple[game.Board, str]:
+    if prompt_file:
+        with open(prompt_file, encoding="utf-8") as f:
+            text = f.read()
+    elif prompt_arg is not None:
+        text = prompt_arg
+    else:
+        text = sys.stdin.read()
     color = game.BLACK if f"あなたの色: 黒" in text else game.WHITE
     board_text = text.split("盤面:\n", 1)[1]
     return game.parse_board(board_text), color
@@ -58,9 +68,11 @@ def main() -> int:
     parser.add_argument("--actions", default="legal")
     parser.add_argument("--counter")
     parser.add_argument("--seconds", type=float, default=5.0)
+    parser.add_argument("--prompt-file")
+    parser.add_argument("--prompt")
     args = parser.parse_args()
 
-    board, color = read_prompt()
+    board, color = read_prompt(args.prompt_file, args.prompt)
     action = next_action(args.actions.split(","), args.counter)
     moves = game.legal_moves(board, color)
     best = moves[0] if moves else "PASS"
@@ -101,6 +113,8 @@ def main() -> int:
     elif action == "sleep":
         time.sleep(args.seconds)
         print(best)
+    elif action.startswith("env:"):
+        print(os.environ.get(action.split(":", 1)[1], ""))
     elif action.startswith("answer:"):
         print(action.split(":", 1)[1])
     else:

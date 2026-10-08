@@ -1,12 +1,18 @@
 # モデル設定の例。config/models.yaml にコピーして使う（models.yaml は Git 管理外）。
-# APIキー・認証情報はここに書かない。環境変数または各CLIのログイン状態を使う。
+# APIキー・認証情報はここに書かない。OSの環境変数か各CLIのログイン状態を使う
+# （env に KEY / TOKEN / SECRET / PASSWORD を含む名前を書くと設定エラーになる）。
 #
 # 項目:
 #   id             一意のID（英数字と . _ -）
 #   provider       mock | cli
 #   model          CLIに渡すモデル名。command 内の {model} に入る
-#   command        実行コマンドの引数配列。プロンプトは標準入力で渡す
-#                  {python}=実行中のPython、{project}=このリポジトリのルート、{model}=model
+#   command        実行コマンドの引数配列。プレースホルダ:
+#                    {python}  実行中のPython   {project} このリポジトリのルート
+#                    {model}   model の値
+#                    {prompt}  プロンプト本文を引数として渡す（.cmd/.bat では使えない）
+#                    {prompt_file} プロンプトを対局ごとの workdir/prompt.txt に書いてそのパスを渡す
+#                  {prompt} も {prompt_file} もなければ、プロンプトは標準入力で渡す
+#   env            追加の環境変数（認証情報は不可）
 #   timeout_sec    応答タイムアウト（省略時は rules.yaml の default_timeout_sec）
 #   output         text（標準出力全体が回答）| json（json_field の値が回答）
 #   json_field     output: json のとき回答本文のパス（例: result、choices.0.text）
@@ -36,12 +42,75 @@ models:
       cost_usd: total_cost_usd
     timeout_sec: 10
 
-  # --- 実CLI（未検証。オプションは各CLIの --help で確認してから有効にする） ---
-  # 以下はテンプレートであり、記載したオプションが実在するかは確認していない。
-  # - id: claude-haiku
-  #   provider: cli
-  #   model: <モデル名>
-  #   command: ["claude", "<非対話実行のオプション>", "--model", "{model}"]
-  #   version_command: ["claude", "--version"]
-  #   sandbox: unknown
-  #   enabled: false
+  # --- 実CLI（Instruction00002 で --help / --version のみ確認。AIへの問い合わせは一度もしていない） ---
+  # すべて enabled: false、sandbox: unknown / unrestricted のため、このままでは大会に参加しない。
+  # 使う前に README の「実CLIを使う前のチェックリスト」を確認し、ユーザーの承認を得ること。
+  # model の値は未確認のプレースホルダ。実在するモデルIDは各CLIで確認して書き換える。
+
+  # Claude Code CLI 2.1.294（Windows: claude.exe）
+  # ヘルプで確認: -p/--print（非対話）、位置引数 prompt、--model、--output-format text|json|stream-json、
+  #   --tools ""（組み込みツールをすべて無効）、--no-session-persistence、--strict-mcp-config、
+  #   --disable-slash-commands、--permission-prompts none、--max-budget-usd（--print 時のみ）
+  # 未確認: 実際にツールが無効になるか、JSON 出力のフィールド名、-p 時に標準入力を読むか
+  #   （位置引数 prompt はヘルプに記載あり。claude.exe は .exe なので {prompt} で渡せる）
+  - id: claude-cheap
+    provider: cli
+    model: "<未確認: 廉価モデルIDまたは別名>"
+    command: ["claude", "-p", "{prompt}", "--model", "{model}", "--output-format", "text",
+              "--tools", "", "--no-session-persistence", "--strict-mcp-config",
+              "--disable-slash-commands", "--permission-prompts", "none", "--max-budget-usd", "0.05"]
+    version_command: ["claude", "--version"]
+    timeout_sec: 120
+    sandbox: unknown
+    sandbox_note: "--tools \"\" で組み込みツール無効（ヘルプ記載）。実際の挙動は未検証"
+    enabled: false
+
+  # Codex CLI 0.161.0（Windows: npm の codex.cmd。{prompt} は使えないので標準入力で渡す）
+  # ヘルプで確認: exec（非対話）、PROMPT 省略または - で標準入力から読む、-m/--model、
+  #   -s/--sandbox read-only|workspace-write|danger-full-access、--ephemeral、--skip-git-repo-check、
+  #   --ignore-user-config、--color never、--json（JSONLイベント）、-o/--output-last-message <FILE>
+  # 未確認: 最終回答だけが標準出力に出るか（-o の方が確実な可能性）、トークン・費用の取得方法
+  # sandbox: -s read-only はモデルが生成したシェルコマンドの「書き込み」を制限するだけで、
+  #   コマンド実行自体を止めるオプションはヘルプに見当たらない → 任意コード実行を抑止できないため unrestricted
+  - id: codex-cheap
+    provider: cli
+    model: "<未確認: 廉価モデルID>"
+    command: ["codex", "exec", "-m", "{model}", "-s", "read-only", "--ephemeral",
+              "--skip-git-repo-check", "--ignore-user-config", "--color", "never", "-"]
+    version_command: ["codex", "--version"]
+    timeout_sec: 180
+    sandbox: unrestricted
+    sandbox_note: "シェルコマンド実行を無効化するオプションがヘルプにない（read-only は書き込み制限のみ）"
+    enabled: false
+
+  # Gemini CLI 0.50.0（Windows: npm の gemini.cmd。{prompt} は使えないので標準入力で渡す）
+  # ヘルプで確認: -p/--prompt（ヘッドレス。標準入力の内容の後ろに追加される）、-m/--model、
+  #   -o/--output-format text|json|stream-json、--approval-mode plan（読み取り専用モード）、-s/--sandbox、
+  #   --policy（ポリシーエンジン）
+  # 未確認: -p "" と標準入力の組み合わせで動くか、plan モードでシェル実行が止まるか、JSON のフィールド名
+  - id: gemini-cheap
+    provider: cli
+    model: "<未確認: 廉価モデルID>"
+    command: ["gemini", "-m", "{model}", "-p", "", "--approval-mode", "plan", "-o", "text"]
+    version_command: ["gemini", "--version"]
+    timeout_sec: 120
+    sandbox: unknown
+    sandbox_note: "--approval-mode plan は読み取り専用モード（ヘルプ記載）。シェル実行の可否は未検証"
+    enabled: false
+
+  # Grok Build CLI 0.2.112（Windows: grok.exe）
+  # ヘルプで確認: -p/--single <PROMPT>（1ターンで標準出力に出して終了）、--prompt-file、-m/--model、
+  #   --output-format plain|json|streaming-json、--tools / --disallowed-tools、--disable-web-search、
+  #   --no-subagents、--no-memory、--max-turns、--sandbox <PROFILE>
+  # 未確認: --tools "" で全ツール無効になるか、sandbox プロファイル名、JSON のフィールド名、モデルID
+  #   （grok models は通信の可能性があるため実行していない）
+  - id: grok-cheap
+    provider: cli
+    model: "<未確認: 廉価モデルID>"
+    command: ["grok", "-p", "{prompt}", "-m", "{model}", "--output-format", "plain",
+              "--tools", "", "--disable-web-search", "--no-subagents", "--no-memory", "--max-turns", "1"]
+    version_command: ["grok", "--version"]
+    timeout_sec: 120
+    sandbox: unknown
+    sandbox_note: "--tools \"\" の挙動は未検証"
+    enabled: false

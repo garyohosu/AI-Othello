@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from datetime import datetime
@@ -19,7 +20,7 @@ import yaml
 
 import ai_runner
 import game
-import statistics as stats
+import game_statistics as stats
 import tournament as tour
 from game import BLACK, WHITE
 
@@ -208,12 +209,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
         try:
             argv = ai_runner.resolve_command(m.command, m.model)
             exe = argv[0]
-        except FileNotFoundError as exc:
-            print(f"NG {m.id}: {exc}")
-            ok = False
+        except (FileNotFoundError, ai_runner.ConfigError) as exc:
+            if m.enabled:
+                print(f"NG {m.id}: {exc}")
+                ok = False
+            else:
+                print(f"SKIP {m.id}（無効）: {exc}")
             continue
+        # version_command は --version 等の課金のない呼び出しだけを想定している
         version = ai_runner.AIPlayer(m).cli_version() if m.version_command else None
-        print(f"OK {m.id}: {exe} version={version or '未取得'} sandbox={m.sandbox}")
+        flag = "" if m.enabled else "（無効）"
+        print(f"OK {m.id}{flag}: {exe} version={version or '未取得'} prompt_via={m.prompt_via} sandbox={m.sandbox}")
     if args.live:
         selected = [m for m in models if m.enabled]
         unrestricted = [m.id for m in selected if not m.is_mock and m.sandbox != "restricted"]
@@ -239,6 +245,25 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 legal = attempt.answer in game.legal_moves(game.initial_board(), BLACK)
                 print(f"LIVE {m.id}: 回答={attempt.answer!r} 形式={kind} 合法={legal} {attempt.elapsed_sec:.1f}秒")
     return EXIT_OK if ok else EXIT_RUNTIME
+
+
+def setup_logging(games_dir: str) -> None:
+    """運用ログ（ファイル置換のリトライなど）を games/_logs/ai-othello.log に残す。"""
+    logger = logging.getLogger("ai_othello")
+    for old in list(logger.handlers):
+        if getattr(old, "_ai_othello", False):
+            logger.removeHandler(old)
+            old.close()
+    logger.setLevel(logging.INFO)
+    try:
+        log_dir = os.path.join(games_dir, "_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        handler: logging.Handler = logging.FileHandler(os.path.join(log_dir, "ai-othello.log"), encoding="utf-8")
+    except OSError:
+        handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    handler._ai_othello = True  # type: ignore[attr-defined]
+    logger.addHandler(handler)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -287,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     args = build_parser().parse_args(argv)
+    setup_logging(args.games_dir)
     try:
         return args.func(args)
     except (ai_runner.ConfigError, ValueError, yaml.YAMLError) as exc:

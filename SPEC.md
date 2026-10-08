@@ -196,14 +196,31 @@ Version 0.2 / 2026-10-08
 | provider | 内容 | 状態 |
 |---|---|---|
 | `mock` | テスト用モックCLI（`tests/mock_cli.py`）。課金なし | 実装済み |
-| `cli` | 汎用CLIアダプタ。`command` の引数配列で実CLIを起動し、プロンプトを標準入力で渡す | 実装済み（実CLIでは未検証） |
+| `cli` | 汎用CLIアダプタ。`command` の引数配列で実CLIを起動する。プロンプトは標準入力・引数・ファイルのいずれかで渡す（5.2節） | 実装済み（実CLIでは未検証） |
 
-- 実CLIの候補は Claude Code CLI、Codex CLI、Gemini CLI。各CLIのコマンドとモデル指定方法は実行環境の `--help` 等で確認してから設定する。存在しないオプションを推測で使わない。
+- 各CLIのコマンドとモデル指定方法は実行環境の `--help` 等で確認してから設定する。存在しないオプションを推測で使わない。
 - Grok（Q-20）: 公式または利用実績のあるCLIが確認できなければ、xAI API を呼ぶ最小限のラッパーを作ってよい。APIキーは環境変数から読み、ログ・Gitに残さない。API経由とCLI経由で比較条件が違うことを記録する。
+
+**確認済みのCLI（Instruction00002。`where` / `--version` / `--help` のみ実行。AIへの問い合わせはしていない）**
+
+| CLI | バージョン | 実体（Windows） | 非対話実行 | プロンプト | ツール・ファイル操作の制限（ヘルプ記載） | 判定 |
+|---|---|---|---|---|---|---|
+| Claude Code | 2.1.294 | `claude.exe` | `-p` | 位置引数 `prompt` | `--tools ""` で組み込みツール全無効、`--strict-mcp-config`、`--max-budget-usd` | unknown（未検証） |
+| Codex | codex-cli 0.161.0 | `codex.cmd`（npm） | `exec` | 標準入力（`-` または省略時） | `-s read-only` は書き込み制限のみ。シェル実行を止めるオプションなし | unrestricted（大会から除外） |
+| Gemini | 0.50.0 | `gemini.cmd`（npm） | `-p` | 標準入力 + `-p` の文字列 | `--approval-mode plan`（読み取り専用）、`--policy` | unknown（未検証） |
+| Grok Build | 0.2.112 | `grok.exe` | `-p` / `--single` | 引数または `--prompt-file` | `--tools` / `--disallowed-tools`、`--disable-web-search`、`--no-subagents`、`--max-turns` | unknown（未検証） |
+
+- 4つとも、ヘルプにタイムアウトのオプションはない。応答タイムアウトはPython側で管理する。
+- 設定例は `config/models.example.yaml`（すべて `enabled: false`、モデルIDは「未確認」のプレースホルダ）。
 
 ### 5.2 呼び出し規則
 - `subprocess` には引数リストを渡し、`shell=True` を使わない。
-- Windows では `claude` / `codex` / `gemini` が npm の `.cmd` ラッパーであることが多いので、`shutil.which()` で実体のパスを解決してから起動する。`.cmd` に引数でプロンプトを渡すとエスケープの問題があるため、プロンプトは標準入力で渡す。
+- Windows では npm 製の CLI（`codex` / `gemini`）が `.cmd` ラッパーなので、`shutil.which()` で実体のパスを解決してから起動する。
+- プロンプトの渡し方（`prompt_via`）は `command` のプレースホルダで決まる。
+  - プレースホルダなし: 標準入力（`stdin`）
+  - `{prompt}`: プロンプト本文を引数として渡す（`arg`）。`.cmd` / `.bat` では cmd.exe の引数解釈で壊れたり注入の危険があるため、設定エラー（起動失敗）として拒否する
+  - `{prompt_file}`: 対局ごとの作業ディレクトリに `prompt.txt` を書き、そのパスを渡す（`file`）
+- `env` でモデルごとに追加の環境変数を渡せる。名前に KEY / TOKEN / SECRET / PASSWORD を含む変数は設定エラーにする（認証情報を設定ファイルに書かせない）。
 - 着手ごとに独立したCLIプロセスを起動し、前の会話履歴を引き継がない。
 - 応答タイムアウトの既定は120秒。モデルごとに `timeout_sec` で上書きできる（思考型モデルは300秒など）（Q-03）。
 - タイムアウト時は子プロセスをプロセスツリーごと終了させる（Windowsは `taskkill /T /F`、それ以外はプロセスグループへ SIGKILL）。Ctrl+C の場合も同様。
@@ -265,7 +282,8 @@ AIに渡すのは「共通指示」「担当色」「記号の凡例」「座標
 | `id` | ○ | 一意のID（英数字と `.` `_` `-`） |
 | `provider` | ○ | `mock` / `cli` |
 | `model` | ○ | CLIに渡すモデル名。`command` 内の `{model}` に入る |
-| `command` | ○ | 引数配列。`{python}`（実行中のPython）、`{project}`（リポジトリのルート）、`{model}` を置換する |
+| `command` | ○ | 引数配列。`{python}`（実行中のPython）、`{project}`（リポジトリのルート）、`{model}`、`{prompt}`、`{prompt_file}` を置換する（5.2節） |
+| `env` | | 追加の環境変数（認証情報は不可） |
 | `timeout_sec` | | 応答タイムアウト |
 | `output` / `json_field` | | `text`（既定）/ `json` と本文のパス（例: `result`、`choices.0.text`） |
 | `usage_fields` | | `actual_model` / `input_tokens` / `output_tokens` / `cost_usd` のJSONパス |
@@ -298,7 +316,7 @@ games_per_side: 1            # 各組み合わせ・各先後の対局数
 | `tournament --resume <tournament_id> [--retry-aborted]` | 大会を再開する。`--retry-aborted` で技術中断した対局を別IDで再対局する |
 | `results [--tournament <id>]` | 成績を集計してCSVに書き、表を表示する |
 | `list-models` | 設定済みモデルの一覧 |
-| `validate [--live]` | 設定の整合性と各CLIの存在・バージョンを確認する（Q-13）。`--live` を付けたときだけ、各モデルに初期盤面で1手だけ実際に回答させる |
+| `validate [--live]` | 設定の整合性と各CLIの存在・バージョンを確認する（Q-13）。無効（`enabled: false`）のモデルはCLIが見つからなくても失敗にしない（SKIP）。`--live` を付けたときだけ、有効なモデルに初期盤面で1手だけ実際に回答させる（サンドボックス未確認のモデルには `--allow-unrestricted` も必要。空の作業ディレクトリで実行） |
 
 **実CLIの実行確認（Q-19）**
 - mock 以外のモデルを呼ぶ前に、対象モデル、対局数、呼び出し回数の目安を表示し、`yes` の入力を求める。`--yes` で省略できる。非対話環境では `--yes` がなければ中止する。
@@ -328,7 +346,9 @@ games/<game_id>/board.txt               現在の盤面
 games/<game_id>/state.json              対局状態
 games/<game_id>/moves.jsonl             試行ごとのログ（1行1レコード、追記のみ）
 games/<game_id>/moves.discarded.jsonl   再開時に切り捨てた未確定ログ（ある場合のみ）
-games/<game_id>/workdir/                AI CLI の作業ディレクトリ
+games/<game_id>/workdir/                AI CLI の作業ディレクトリ（{prompt_file} 使用時は prompt.txt）
+games/_logs/ai-othello.log              運用ログ（ファイル置換のリトライなど）
+games/_validate/<日時>/                 validate --live の作業ディレクトリ
 games/_tournaments/<tournament_id>.json 大会の対局予定
 results/matches.csv                     対局ごとの結果
 results/ranking.csv                     モデルごとの集計
@@ -378,7 +398,7 @@ results/ranking.csv                     モデルごとの集計
 | `game_id` / `move_number` / `color` / `model_id` / `attempt` | 対局、手番番号、色、モデル、手番内の試行番号 |
 | `board_before` | 試行前の盤面 |
 | `legal_moves` | その局面の合法手（分析用。AIには渡していない） |
-| `prompt` / `board_delivery` | 実際に渡したプロンプト全文と盤面の渡し方 |
+| `prompt` / `board_delivery` / `prompt_via` | 実際に渡したプロンプト全文、盤面の渡し方、プロンプトの渡し方（`stdin` / `arg` / `file`） |
 | `raw_stdout` / `raw_stderr` / `exit_code` | CLIの生出力（秘密情報はマスク）と終了コード |
 | `extracted` | 解析後の回答本文（技術エラー時は null） |
 | `outcome` | `move` / `pass` / `foul` / `technical_error` |
@@ -393,7 +413,10 @@ results/ranking.csv                     モデルごとの集計
 ### 9.4 書き込み順と整合性
 - 1試行ごとに「moves.jsonl に追記（fsync）→ board.txt を一時ファイル経由で置換 → state.json を一時ファイル経由で置換」の順で保存する。
 - **state.json の置換完了をコミット点とする。** state.json の `log_lines` 行目までが確定済みの試行。
-- Windows でファイル置換が一時的に `PermissionError` になる場合（ウイルス対策ソフト等）に備え、置換は短い間隔で数回リトライする。
+- Windows でファイル置換が一時的に `PermissionError` になる場合（ウイルス対策ソフト等と推定。原因は未確定）に備え、置換をリトライする。
+  - 対象は `PermissionError` のみ。最大10回、待機は 0.05秒 × 試行回数（0.05, 0.10, …, 0.45秒、合計約2.25秒）。
+  - リトライのたびに、操作・置換元と置換先のパス・試行回数・例外の種類・errno・winerror を運用ログ `games/_logs/ai-othello.log` に記録する。ファイルの内容や秘密情報は記録しない。
+  - 10回とも失敗したら例外を送出して停止する。置換先は元の内容のまま残るため、state.json がコミット点であることは崩れない（未確定の試行は再開時に切り捨てる）。
 - 再開時の照合手順:
   1. moves.jsonl のうち `log_lines` を超える行は未確定とみなし、`moves.discarded.jsonl` に退避して切り捨てる。
   2. 初期盤面から確定済みログを再生し、盤面ハッシュ・手番・手番番号・反則数・反則内訳・手番内の技術エラー数と試行数を state.json と照合する。
@@ -413,7 +436,7 @@ results/ranking.csv                     モデルごとの集計
 
 ---
 
-## 10. 成績集計（statistics.py）
+## 10. 成績集計（game_statistics.py）
 
 ### 10.1 results/matches.csv（1対局1行）
 `tournament_id, game_id, black, white, result_type, winner, loser, black_stones, white_stones, stone_diff, moves, black_fouls, white_fouls, black_foul_format, black_foul_illegal, black_foul_wrong_pass, white_foul_format, white_foul_illegal, white_foul_wrong_pass, black_tech_errors, white_tech_errors, aborted_by, black_avg_sec, white_avg_sec, black_tokens, white_tokens, black_cost_usd, white_cost_usd, started_at, finished_at`
@@ -469,7 +492,7 @@ main.py                     CLI: play / tournament / results / list-models / val
 game.py                     ルール判定・盤面入出力（純粋関数）
 ai_runner.py                CLIアダプタ・出力解析・タイムアウト・秘密情報マスク
 tournament.py               対局進行、反則・技術エラー管理、保存、再開、総当たり
-statistics.py               CSV集計
+game_statistics.py          CSV集計（正本の statistics.py から改名。標準ライブラリとの名前衝突を避けるため）
 config/models.example.yaml  モデル設定の例（モックのみ有効）
 config/rules.yaml           反則上限・技術リトライ上限・待機時間・対局数
 tests/test_game.py
@@ -480,14 +503,14 @@ pytest.ini
 requirements.txt            PyYAML, pytest
 .gitignore
 ```
-注意: `statistics.py` は Python 標準ライブラリの `statistics` と同じ名前なので、リポジトリのルートを `sys.path` に入れると標準ライブラリ側を隠す。正本のファイル名に従っているが、標準の `statistics` が必要になった場合は改名を検討する。
+注意: 正本では集計モジュールを `statistics.py` としているが、Python 標準ライブラリの `statistics` を隠してしまうため `game_statistics.py` に改名した（Instruction00002）。
 
 ---
 
 ## 14. 実装手順と進捗
-1. リポジトリとCLI環境の確認 — 済み（claude / codex / gemini / grok のコマンドが存在することだけを確認。`--help` による実際のオプションの確認と実行はしていない）
+1. リポジトリとCLI環境の確認 — 済み（Instruction00002 で claude / codex / gemini / grok の `where`・`--version`・`--help` を確認。5.1節）
 2. `game.py` とテスト — 済み
 3. モックCLIで対局、累積反則10回、技術中断、ログ、再開、総当たり、CSV — 済み
-4. 実CLIの組み込み — 未着手。ユーザーの許可を得てから、廉価モデル合計2種類で1局だけ試す（Q-18）
+4. 実CLIの組み込み — 設定例まで済み。実際の呼び出しは未実施。ユーザーの承認を得てから、サンドボックス制限の確認と、廉価モデル合計2種類での1局（Q-18）を行う
 5. README の更新 — 済み（実装範囲に合わせて随時更新）
 6. 作業報告 — `instructions/ResultXXXXX.md` に記録する

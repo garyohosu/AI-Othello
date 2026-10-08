@@ -8,6 +8,7 @@ state.json の置換完了をコミット点とする。再開時は state.json 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ RESULT_FOUL_LOSS = "foul_loss"
 RESULT_TECHNICAL_ABORT = "technical_abort"
 
 FOUL_TYPES = ("format", "illegal_move", "wrong_pass")
+
+fs_log = logging.getLogger("ai_othello.fs")
 
 
 class StateError(RuntimeError):
@@ -69,20 +72,42 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def replace_with_retry(src: str, dst: str, attempts: int = 10, wait_sec: float = 0.05) -> None:
-    """os.replace を数回リトライする。
+REPLACE_ATTEMPTS = 10
+REPLACE_WAIT_SEC = 0.05
+
+
+def replace_with_retry(
+    src: str,
+    dst: str,
+    attempts: int = REPLACE_ATTEMPTS,
+    wait_sec: float = REPLACE_WAIT_SEC,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """os.replace を PermissionError のときだけリトライする。
 
     Windows ではウイルス対策ソフトや検索インデクサが一瞬ファイルを開いていると
-    PermissionError になることがあるため。
+    PermissionError になることがある（原因は未確定。Result00001/00002 参照）。
+    待機は 0.05, 0.10, …, 0.45 秒で、既定の10回なら合計 約2.25秒。
+    置換に失敗しても置換先は元の内容のまま残るので、コミット点（state.json）の
+    整合性は保たれる。リトライのたびに、ファイル名・操作・例外・試行回数を
+    ログに記録する（内容は書かない）。
     """
-    for i in range(attempts):
+    for i in range(1, attempts + 1):
         try:
             os.replace(src, dst)
+            if i > 1:
+                fs_log.warning("replace succeeded after retry: dst=%s attempt=%d/%d", dst, i, attempts)
             return
-        except PermissionError:
-            if i == attempts - 1:
+        except PermissionError as exc:
+            detail = (
+                f"op=replace src={src} dst={dst} attempt={i}/{attempts} "
+                f"exc={type(exc).__name__} errno={exc.errno} winerror={getattr(exc, 'winerror', None)}"
+            )
+            if i == attempts:
+                fs_log.error("replace failed, giving up: %s", detail)
                 raise
-            time.sleep(wait_sec * (i + 1))
+            fs_log.warning("replace retry: %s", detail)
+            sleep(wait_sec * i)
 
 
 def _atomic_write(path: str, text: str) -> None:
@@ -355,6 +380,7 @@ def play_game(
             "legal_moves": legal,  # 分析用。AIには渡していない
             "prompt": attempt.prompt,
             "board_delivery": attempt.board_delivery,
+            "prompt_via": attempt.prompt_via,
             "raw_stdout": attempt.raw_stdout,
             "raw_stderr": attempt.raw_stderr,
             "exit_code": attempt.exit_code,

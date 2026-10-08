@@ -22,7 +22,7 @@ Pythonを審判役として、CLIから起動する複数のAIモデル同士を
 |---|---|
 | ルールエンジン（`game.py`） | 実装済み・テスト済み |
 | 対局管理・反則/技術エラー・保存/再開・総当たり・CSV集計 | 実装済み・モックCLIでテスト済み |
-| 実AI CLI（Claude Code / Codex / Gemini / Grok） | **未接続・未検証**。汎用CLIアダプタはあるが、実CLIでは一度も動かしていない |
+| 実AI CLI（Claude Code / Codex / Gemini / Grok） | **未接続・未検証**。CLIの存在・バージョン・`--help` だけを確認し、設定例を用意した。AIへの問い合わせは一度もしていない |
 
 ## セットアップ
 Python 3.11 以降が必要。
@@ -37,10 +37,10 @@ copy config\models.example.yaml config\models.yaml
 Windows では `python` コマンドが Microsoft Store のスタブになっている場合がある。その場合は `py` を使う。
 
 ## 使い方
-`config/models.example.yaml` には課金のないモックモデル（`mock-first`、`mock-json`）だけが有効になっている。
+`config/models.example.yaml` で有効になっているのは、課金のないモックモデル（`mock-first`、`mock-json`）だけ。実CLIの設定例（`claude-cheap` など）はすべて `enabled: false` で、サンドボックス未確認のため対局には使えない。
 
 ```powershell
-# 設定とCLIの存在を確認（AIは呼ばない）
+# 設定とCLIの存在・バージョンを確認（AIは呼ばない。実CLIには --version だけを実行）
 py main.py validate
 
 # モデル一覧
@@ -71,18 +71,40 @@ py -m pytest
 ```
 実CLIを呼ぶテストは `real_cli` マーカーで既定から除外している（現時点では該当テストなし）。
 
-## 実CLIを使うときの注意
-- 各CLIのオプションは `--help` で確認してから `config/models.yaml` に設定する。example 内の実CLIの例はテンプレートで、オプションは未確認。
+## 実AI CLI の準備状況
+2026-10-08 に、この環境で `where` / `--version` / `--help` だけを実行して確認した（[Result00002](./instructions/Result00002.md)）。
+
+| CLI | バージョン | 非対話実行 | プロンプトの渡し方 | 判定 |
+|---|---|---|---|---|
+| Claude Code | 2.1.294 | `claude -p` | 引数（`claude.exe` なので可） | サンドボックス未検証 |
+| Codex | codex-cli 0.161.0 | `codex exec` | 標準入力（`codex.cmd` なので引数は不可） | シェル実行を止められないため大会から除外 |
+| Gemini | 0.50.0 | `gemini -p` | 標準入力（`gemini.cmd` なので引数は不可） | サンドボックス未検証 |
+| Grok Build | 0.2.112 | `grok -p` | 引数（`grok.exe` なので可） | サンドボックス未検証 |
+
+未確認の点:
+- 廉価モデルの実際のモデルID（設定例は「未確認」のプレースホルダ）
+- ツール無効化オプション（`--tools ""`、`--approval-mode plan` など）が実際に効くか
+- 回答が標準出力にそのまま出るか、JSON 出力のフィールド名、トークン・費用の取り方
+
+### 実CLIを呼ぶ前のチェックリスト（ユーザーの承認が必要）
+実際のモデル呼び出しは課金が発生する可能性があるため、**ユーザーが明示的に承認するまで実行しない**。
+1. 使うCLIとモデルIDを決め、`config/models.yaml`（Git 管理外）の `model` を実在するIDに書き換える。
+2. サンドボックスの確認方法を決める。確認できるまで `sandbox` は `unknown` のままにする（勝手に `restricted` にしない）。Codex は現状のオプションでは除外。
+3. 承認を得たら、まず `py main.py validate --live --allow-unrestricted` で1手だけ疎通確認する（実行前に対象と回数の確認が表示される）。
+4. 結果を見てから、Q-18 の「廉価モデル合計2種類で1局」に進む。
+
+### 共通の注意
+- 各CLIのオプションは `--help` で確認してから `config/models.yaml` に設定する。
 - `sandbox: restricted`（任意コード実行・ファイル編集を禁止できていることを確認済み）にしたモデルだけが大会に参加できる。
 - mock 以外のモデルを呼ぶ前に、対象と呼び出し回数の目安を表示して確認を求める（`--yes` で省略）。
-- APIキーは設定ファイルに書かず、環境変数か各CLIのログイン状態を使う。ログ中のキーらしき文字列はマスクする。
+- APIキーは設定ファイルに書かず、環境変数か各CLIのログイン状態を使う。`env` に KEY / TOKEN / SECRET / PASSWORD を含む名前を書くと設定エラーになる。ログ中のキーらしき文字列はマスクする。
+- 運用ログ（ファイル置換のリトライなど）は `games/_logs/ai-othello.log` に残る。
 
 ## 制限事項
-- 実AI CLIとの接続は未検証。
+- 実AI CLIとの接続は未検証（AIへの問い合わせは未実施）。
 - 盤面はプロンプトに埋め込んで渡す方式のみ。CLIのファイル参照を使う方式は未実装。
 - 対局は直列実行のみ。
 - 費用・トークンはCLIがJSONで返した値のみ記録する。費用の上限は保証しない。
-- `statistics.py` は Python 標準ライブラリの `statistics` と同名のため、このリポジトリから標準の `statistics` は import できない。
 
 ## ライセンス
 未設定。

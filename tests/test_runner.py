@@ -122,7 +122,20 @@ def test_example_config_loads():
     path = os.path.join(ai_runner.PROJECT_ROOT, "config", "models.example.yaml")
     with open(path, encoding="utf-8") as f:
         models = ai_runner.load_models(yaml.safe_load(f))
-    assert [m.id for m in models] == ["mock-first", "mock-json"]
+    by_id = {m.id: m for m in models}
+    assert [m.id for m in models if m.enabled] == ["mock-first", "mock-json"]
+    real = [m for m in models if not m.is_mock]
+    assert {m.id for m in real} == {"claude-cheap", "codex-cheap", "gemini-cheap", "grok-cheap"}
+    # 実CLIはすべて無効で、サンドボックス確認済み（restricted）のものはない
+    assert all(not m.enabled and m.sandbox != "restricted" for m in real)
+    assert by_id["codex-cheap"].sandbox == "unrestricted"
+    # .cmd ラッパーの CLI は標準入力、.exe の CLI は引数でプロンプトを渡す
+    assert by_id["codex-cheap"].prompt_via == "stdin"
+    assert by_id["gemini-cheap"].prompt_via == "stdin"
+    assert by_id["claude-cheap"].prompt_via == "arg"
+    assert by_id["grok-cheap"].prompt_via == "arg"
+    # モデルIDは未確認のプレースホルダのまま
+    assert all("未確認" in m.model for m in real)
 
 
 def test_mask_secrets(monkeypatch):
@@ -229,3 +242,72 @@ def test_resolve_command_placeholders():
     assert os.path.samefile(argv[0], sys.executable)
     assert argv[1] == ai_runner.PROJECT_ROOT + "/x.py"
     assert argv[3] == "abc"
+
+
+def test_stdlib_statistics_is_not_shadowed():
+    import statistics
+
+    assert hasattr(statistics, "mean") and statistics.mean([1, 2, 3]) == 2
+    assert os.path.dirname(os.path.abspath(statistics.__file__)) != ai_runner.PROJECT_ROOT
+    assert not os.path.exists(os.path.join(ai_runner.PROJECT_ROOT, "statistics.py"))
+
+
+# ---------------------------------------------------------------- プロンプトの渡し方・環境変数
+
+
+def test_prompt_via_detection():
+    assert mock_cfg("legal").prompt_via == "stdin"
+    cfg = mock_cfg("legal")
+    cfg.command += ["--prompt-file", "{prompt_file}"]
+    assert cfg.prompt_via == "file"
+    cfg = mock_cfg("legal")
+    cfg.command += ["--prompt", "{prompt}"]
+    assert cfg.prompt_via == "arg"
+    with pytest.raises(ai_runner.ConfigError):
+        ModelConfig.from_dict({"id": "a", "provider": "cli", "model": "m",
+                               "command": ["x", "{prompt}", "{prompt_file}"]})
+
+
+def test_prompt_via_file(tmp_path):
+    data = {"id": "mock", "provider": "mock", "model": "m",
+            "command": ["{python}", MOCK, "--actions", "legal", "--prompt-file", "{prompt_file}"]}
+    player = AIPlayer(ModelConfig.from_dict(data), cwd=str(tmp_path))
+    attempt = player.ask(INITIAL_TEXT, game.BLACK)
+    assert attempt.error_type is None and attempt.answer == "D3"
+    assert attempt.prompt_via == "file"
+    assert (tmp_path / "prompt.txt").read_text(encoding="utf-8") == attempt.prompt
+
+
+def test_prompt_via_argument():
+    data = {"id": "mock", "provider": "mock", "model": "m",
+            "command": ["{python}", MOCK, "--actions", "legal", "--prompt", "{prompt}"]}
+    attempt = AIPlayer(ModelConfig.from_dict(data)).ask(INITIAL_TEXT, game.BLACK)
+    assert attempt.error_type is None and attempt.answer == "D3"
+    assert attempt.prompt_via == "arg"
+
+
+@pytest.mark.skipif(os.name != "nt", reason=".cmd は Windows のみ")
+def test_prompt_argument_to_cmd_wrapper_is_refused(tmp_path):
+    wrapper = tmp_path / "fake-ai.cmd"
+    wrapper.write_text("@echo D3\n", encoding="ascii")
+    with pytest.raises(ai_runner.ConfigError):
+        ai_runner.resolve_command([str(wrapper), "-p", "{prompt}"], "m", prompt="x")
+    cfg = ModelConfig.from_dict({"id": "w", "provider": "cli", "model": "m",
+                                 "command": [str(wrapper), "-p", "{prompt}"]})
+    attempt = AIPlayer(cfg).ask(INITIAL_TEXT, game.BLACK)
+    assert attempt.error_type == ai_runner.LAUNCH
+    # 標準入力で渡すなら .cmd でも起動できる
+    argv = ai_runner.resolve_command([str(wrapper)], "m")
+    assert argv[0].lower().endswith(".cmd")
+
+
+def test_env_is_passed_and_secrets_are_rejected():
+    attempt = ask("env:AI_OTHELLO_TEST_FLAG", env={"AI_OTHELLO_TEST_FLAG": "1"})
+    assert attempt.answer == "1"
+    for name in ["ANTHROPIC_API_KEY", "XAI_TOKEN", "MY_SECRET", "DB_PASSWORD"]:
+        with pytest.raises(ai_runner.ConfigError):
+            ModelConfig.from_dict({"id": "a", "provider": "cli", "model": "m", "command": ["x"],
+                                   "env": {name: "v"}})
+    with pytest.raises(ai_runner.ConfigError):
+        ModelConfig.from_dict({"id": "a", "provider": "cli", "model": "m", "command": ["x"],
+                               "env": {"N": 1}})

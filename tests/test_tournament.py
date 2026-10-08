@@ -6,7 +6,7 @@ import pytest
 
 import ai_runner
 import game
-import statistics as stats
+import game_statistics as stats
 import tournament as tour
 from ai_runner import Attempt
 from game import BLACK, WHITE
@@ -539,12 +539,25 @@ def test_retry_aborted_creates_new_game_and_keeps_original(tmp_path):
 def test_main_cli_with_mock_models(tmp_path, capsys):
     import main
 
-    config = os.path.join(ai_runner.PROJECT_ROOT, "config", "models.example.yaml")
+    # テストから実CLIを（--version も含めて）呼ばないよう、モックだけの設定を使う
+    config = tmp_path / "models.yaml"
+    config.write_text(
+        "models:\n"
+        "  - {id: mock-first, provider: mock, model: m,"
+        " command: ['{python}', '{project}/tests/mock_cli.py', '--actions', 'legal']}\n"
+        "  - {id: mock-json, provider: mock, model: m, output: json, json_field: result,"
+        " command: ['{python}', '{project}/tests/mock_cli.py', '--actions', 'json']}\n"
+        "  - {id: missing-off, provider: cli, model: m, command: ['no-such-cli-ai-othello'], enabled: false}\n",
+        encoding="utf-8",
+    )
+    config = str(config)
     rules = os.path.join(ai_runner.PROJECT_ROOT, "config", "rules.yaml")
     base = ["--config", config, "--rules", rules,
             "--games-dir", str(tmp_path / "games"), "--results-dir", str(tmp_path / "results")]
 
+    # 無効なモデルのCLIが見つからなくても validate は失敗しない
     assert main.main(base + ["validate"]) == 0
+    assert "SKIP missing-off" in capsys.readouterr().out
     assert main.main(base + ["list-models"]) == 0
     assert main.main(base + ["tournament", "--models", "mock-first,mock-json"]) == 0
     out = capsys.readouterr().out
@@ -576,4 +589,102 @@ def test_main_refuses_real_cli_without_confirmation(tmp_path, capsys, monkeypatc
     # 非対話環境で --yes がなければ実行しない
     assert main.main(base + ["play", "--black", "real-a", "--white", "real-b", "--allow-unrestricted"]) == 2
     assert "--yes" in capsys.readouterr().out
-    assert not os.path.exists(tmp_path / "games")
+    # 運用ログ（_logs）以外の対局データは作られていない
+    assert set(os.listdir(tmp_path / "games")) <= {"_logs"}
+
+
+# ---------------------------------------------------------------- ファイル置換のリトライ
+
+
+def test_replace_retry_logs_and_succeeds(tmp_path, monkeypatch, caplog):
+    src, dst = tmp_path / "a.tmp", tmp_path / "a.json"
+    src.write_text("new", encoding="utf-8")
+    dst.write_text("old", encoding="utf-8")
+    real_replace = os.replace
+    calls = []
+
+    def flaky(s, d):
+        calls.append(1)
+        if len(calls) <= 2:
+            exc = PermissionError(13, "Access is denied")
+            raise exc
+        return real_replace(s, d)
+
+    monkeypatch.setattr(tour.os, "replace", flaky)
+    sleeps = []
+    with caplog.at_level("WARNING", logger="ai_othello.fs"):
+        tour.replace_with_retry(str(src), str(dst), sleep=sleeps.append)
+    assert dst.read_text(encoding="utf-8") == "new"
+    assert sleeps == [0.05, 0.1]
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 3
+    assert "attempt=1/10" in messages[0] and "a.json" in messages[0] and "PermissionError" in messages[0]
+    assert "succeeded after retry" in messages[2] and "attempt=3/10" in messages[2]
+
+
+def test_replace_retry_gives_up_and_keeps_old_file(tmp_path, monkeypatch, caplog):
+    src, dst = tmp_path / "a.tmp", tmp_path / "a.json"
+    src.write_text("new", encoding="utf-8")
+    dst.write_text("old", encoding="utf-8")
+
+    def always_fail(s, d):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(tour.os, "replace", always_fail)
+    sleeps = []
+    with caplog.at_level("WARNING", logger="ai_othello.fs"):
+        with pytest.raises(PermissionError):
+            tour.replace_with_retry(str(src), str(dst), sleep=sleeps.append)
+    assert len(sleeps) == 9
+    assert abs(sum(sleeps) - 2.25) < 1e-9
+    assert dst.read_text(encoding="utf-8") == "old"
+    assert caplog.records[-1].levelname == "ERROR" and "attempt=10/10" in caplog.records[-1].getMessage()
+
+
+def test_replace_retry_does_not_retry_other_errors(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        tour.replace_with_retry(str(tmp_path / "missing"), str(tmp_path / "x"), sleep=lambda s: None)
+
+
+def test_failed_state_replace_keeps_commit_point_consistent(tmp_path, monkeypatch):
+    with pytest.raises(KeyboardInterrupt):
+        play(tmp_path, ScriptedPlayer("a", ["legal"] * 3 + ["interrupt"]), ScriptedPlayer("b"))
+    store = tour.GameStore(str(tmp_path), "g1")
+    committed = store.read_records()
+    real_replace = os.replace
+
+    def fail_state(s, d):
+        if d.endswith("state.json"):
+            raise PermissionError(13, "Access is denied")
+        return real_replace(s, d)
+
+    monkeypatch.setattr(tour.os, "replace", fail_state)
+    monkeypatch.setattr(tour.time, "sleep", lambda s: None)
+    with pytest.raises(PermissionError):
+        play(tmp_path, ScriptedPlayer("a"), ScriptedPlayer("b"))
+    monkeypatch.setattr(tour.os, "replace", real_replace)
+    # state.json は更新されていないので、追記済みのログ1行は未確定として切り捨てられる
+    state, board = store.recover()
+    assert store.read_records() == committed
+    assert_consistent(store)
+    _, final = play(tmp_path, ScriptedPlayer("a"), ScriptedPlayer("b"))
+    assert final["status"] == tour.FINISHED
+
+
+def test_records_prompt_via(tmp_path):
+    store, _ = play(tmp_path, ScriptedPlayer("a"), ScriptedPlayer("b"))
+    assert store.read_records()[0]["prompt_via"] == "stdin"
+
+
+def test_main_writes_operation_log(tmp_path):
+    import logging
+
+    import main
+
+    main.setup_logging(str(tmp_path / "games"))
+    logging.getLogger("ai_othello.fs").warning("replace retry: test-entry")
+    for h in logging.getLogger("ai_othello").handlers:
+        h.flush()
+    log = (tmp_path / "games" / "_logs" / "ai-othello.log").read_text(encoding="utf-8")
+    assert "replace retry: test-entry" in log
+    main.setup_logging(str(tmp_path / "other"))  # ハンドラを付け替えてファイルを閉じる
