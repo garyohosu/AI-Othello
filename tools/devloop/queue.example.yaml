@@ -1,0 +1,17 @@
+# 監督ランナーの作業キュー例。対象リポジトリとは別の使い捨てクローンで使う。
+# 実行: py -m tools.devloop.autopilot --repo <クローン> --queue <このファイル> --config <devloop.yaml> [--execute] [--commit] [--push]
+# 既定は安全側: 計画の表示のみ（dry-run）、commit・push 無効。
+
+# 登録する指示書（先頭から順に実行。AIが勝手に追加しない）。
+# 番号は前のタスク番号 + max_loops 以上にする（retry が使う番号の区画を空けるため）。
+tasks:
+  - instructions/Instruction00010.md
+  - instructions/Instruction00013.md   # max_loops: 3 のとき 10 + 3
+
+max_tasks: 5             # 登録できるタスク数の上限（1～20）
+max_total_calls: 12      # タスクをまたいだ AI 呼び出し回数の合計上限（2以上）
+max_elapsed_sec: 3600    # 実行時間の上限（タスクの区切りで判定。1回のAI呼び出しはタイムアウトで止まる）
+
+# commit・push は、ここと CLI（--commit / --push）の両方が必要。既定はどちらも false。
+allow_commit: false
+allow_push: false        # true のときは allow_commit も true にする。push 先は origin の作業ブランチのみ（main/master は拒否）

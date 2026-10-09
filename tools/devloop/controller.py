@@ -129,6 +129,7 @@ class Outcome:
     loops: int = 0
     instruction: str = ""
     history: list[dict[str, Any]] = field(default_factory=list)
+    calls: int = 0  # この実行で使った AI 呼び出し回数（監督ランナーの総数制限に使う）
 
     @property
     def exit_code(self) -> int:
@@ -320,6 +321,7 @@ class Controller:
                 "loop": 1,
                 "calls": 0,
                 "current_instruction": instr,
+                "start_instruction": instr,  # 最初の指示書（retry で変わらない。監督ランナーが所有者判定に使う）
                 "phase": "implement",
                 "current": None,
                 "history": [],
@@ -342,7 +344,7 @@ class Controller:
             self.store.save(state)
             self.store.log("interrupted", phase=state["phase"])
             return Outcome("interrupted", "interrupted", "Ctrl+C で中断した。--resume で再開できる",
-                           state["loop"], state["current_instruction"], state["history"])
+                           state["loop"], state["current_instruction"], state["history"], calls=state["calls"])
 
     def _stop(self, state: dict[str, Any], reason: str, detail: str = "", status: str = "stopped") -> Outcome:
         if state.get("current"):
@@ -352,7 +354,8 @@ class Controller:
         self.store.save(state)
         self.store.log("stop", status=status, reason=reason, detail=detail)
         self.out(f"[{status}] {reason}: {detail}")
-        return Outcome(status, reason, detail, state["loop"], state["current_instruction"], state["history"])
+        return Outcome(status, reason, detail, state["loop"], state["current_instruction"], state["history"],
+                       calls=state["calls"])
 
     def _clip(self, text: str) -> str:
         limit = self.cfg.max_output_chars

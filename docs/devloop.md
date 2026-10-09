@@ -103,6 +103,29 @@ py -m tools.devloop.controller --repo . --execute --resume
 ```
 `decision` は `complete` / `retry` / `blocked`。`retry` では `next_instruction` が必須。JSON Schema は実行時に `.devloop/review_schema.json` に書き出され、`{schema_file}` で CLI に渡せます（Codex の `--output-schema` を想定。未検証）。
 
+## 監督ランナー（複数タスクの自走）
+
+`tools/devloop/autopilot.py` は、事前に登録した作業キュー（指示書の順序付きリスト）を1回の起動で順に処理します。1タスクの中身（実装・機械的チェック・レビュー・retry）は通常の Controller がそのまま行い、ランナーはその結果を次の判断に使うだけです。
+
+```
+py -m tools.devloop.autopilot --repo <使い捨てクローン> --queue tools/devloop/queue.example.yaml --config <devloop.yaml> --dry-run
+py -m tools.devloop.autopilot ... --execute [--allow-real] [--commit] [--push] [--resume]
+```
+
+- **既定は dry-run。** `--execute` と設定の `dry_run: false` の両方が必要。実AIは従来どおり `allow_real_cli: true` と `--allow-real` が必要（迂回しない）。
+- **登録されたタスクだけを実行。** AI が指示書を追加・並べ替えすることはない。タスク番号は前の番号 + `max_loops` 以上（retry 用の番号の区画が重ならないように）。既存の指示書・結果は上書きしない。
+- **停止条件**: `blocked`、技術エラー、テスト失敗、レビュー形式不正、禁止変更、番号衝突、承認なし、上限超過、commit 無効、保護ブランチ。いずれも後続タスクを開始しない。
+- **commit**: タスクが `complete`、機械的テスト成功、禁止変更なし、の場合に限る。変更ファイルは `git status` から列挙し、パス指定の `git add -- <paths>` だけで stage する（`git add -A` は使わない）。メッセージには `Devloop-Instruction:` の行を入れる。queue の `allow_commit` と `--commit` の両方が必要。
+- **push**: `--push` と `allow_push` と commit の有効化が必要。`origin` の作業ブランチだけに、強制なしで push する。`main` / `master` への commit・push は拒否する。
+- **上限**: タスク数（`max_tasks`）、タスクをまたぐ AI 呼び出しの合計（`max_total_calls`）、実行時間（`max_elapsed_sec`、タスクの区切りで判定）。子の Controller には残りの呼び出し枠だけを渡す。
+- **再開**: `.devloop/autopilot.json` に各タスクの状態・commit SHA・呼び出し回数を保存する。`--resume` では完了済みのタスクを再実行せず、commit 済みのものは `Devloop-Instruction:` の行で検出して二重 commit しない。ブランチが変わっていたら再開しない。
+- **状態がある状態での新規開始は拒否**する（上書きしない）。
+
+**保証しないこと**
+- 金額の上限。呼び出し回数と時間の上限だけで、費用の総額は保証できない（Codex には金額上限のオプションがない）。
+- Claude / Codex の実CLIの挙動。モックでの検証のみ。
+- `acceptEdits` などで作業ディレクトリ外への書き込みが防がれること。
+
 ## 実CLIでの本番テスト前に決めること
 - 実装担当（Claude Code）の権限: 例では `--tools "Read,Edit,Write,Glob,Grep"` と `--permission-mode acceptEdits` を使う（シェル実行なし）。作業ディレクトリ外への書き込みが防がれるかは未検証。
 - レビュー担当（Codex）: `-s read-only` は書き込みを制限するだけで、読み取り系のコマンド実行はありうる。最終回答だけが標準出力に出るかは未確認。

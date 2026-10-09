@@ -1,4 +1,4 @@
-"""読み取り専用の Git 操作。コントローラは commit / push / checkout などを一切しない。"""
+"""読み取り専用の Git 操作。コントローラは commit / push / checkout などを一切しない（書き込みは gitwrite.py の監督ランナーだけ）。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import hashlib
 import os
 import subprocess
 
-READ_ONLY_SUBCOMMANDS = {"rev-parse", "status", "diff", "ls-files"}
+READ_ONLY_SUBCOMMANDS = {"rev-parse", "status", "diff", "ls-files", "log"}
 
 
 class GitError(RuntimeError):
