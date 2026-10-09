@@ -68,7 +68,7 @@ env -u OPENAI_API_KEY py main.py play --black claude-haiku --white claude-sonnet
 - 途中で停止した場合は `py main.py play --resume <GAME_ID>` で再開できる（既存機能）。
 
 ## 8. 実AI呼び出し
-- **3回**（すべてツール制限のプローブ。対局の手番ではない）。
+- **5回**（ツール制限のプローブ3回と、`validate --live` の初期盤面1手×2モデル。対局の手番ではない）。
 - コード変更なし。対局データ（`games/`）はモック対局1件のみ（Git管理外）。
 
 ## 9. 追記: `validate --live` の実行（ユーザー指示による）
