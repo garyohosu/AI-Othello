@@ -30,18 +30,20 @@ allowed_test_executables: ["py", "python", "python3", "pytest"]
 
 # 実装担当・レビュー担当
 # command のプレースホルダ: {python} {prompt} {instruction} {result} {repo} {schema_file} {model}
-#   {prompt} がなければプロンプトは標準入力で渡す。.cmd/.bat（npm 製CLI）では {prompt} は使えない。
+#   {prompt} がなければプロンプトは標準入力へ UTF-8 で送る（Windows の引数長制限を避けるため、長文は stdin を使う）。
+#   .cmd/.bat（npm 製CLI）では {prompt} は使えない。
 #
 # 以下の実CLIのコマンドは、2026-10-08 に --help で存在を確認したオプションだけで組んだ「未検証」の例。
 # 実際に権限が意図どおり制限されるか、出力が期待どおりかは確認していない（Result00003.md 参照）。
 implementer:
   provider: claude
   # --tools でファイル操作系の組み込みツールだけに絞る（Bash を含めない＝シェル実行なし。テストはコントローラが実行）
-  command: ["claude", "-p", "{prompt}", "--tools", "Read,Edit,Write,Glob,Grep",
+  # プロンプトは標準入力（UTF-8）で渡す。{prompt} を引数に入れない。
+  command: ["claude", "-p", "--tools", "Read,Edit,Write,Glob,Grep",
             "--permission-mode", "acceptEdits", "--permission-prompts", "none",
             "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"]
   timeout_sec: 1800
-  note: "未検証。--permission-mode acceptEdits はファイル編集を自動承認する。作業ディレクトリ外への書き込みが防がれるかは未確認"
+  note: "未検証。claude -p が標準入力からのプロンプトを受け付けるかは実CLIで未確認（モックでは確認済みは入出力契約のみ）。--permission-mode acceptEdits はファイル編集を自動承認する。作業ディレクトリ外への書き込みが防がれるかは未確認"
 
 reviewer:
   provider: codex

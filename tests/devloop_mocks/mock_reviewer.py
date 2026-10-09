@@ -30,8 +30,9 @@ def main():
     # 親プロセスは標準入力を UTF-8 で書く。Windows の既定（cp932）で読むと文字化けして書き出せない。
     prompt = sys.stdin.buffer.read().decode("utf-8")
     if args.prompt_out:
-        with open(args.prompt_out, "w", encoding="utf-8") as f:
-            f.write(prompt)
+        # バイナリで書く。テキストモードだと Windows で改行が CRLF に変換され、受け取った内容と一致しない。
+        with open(args.prompt_out, "wb") as f:
+            f.write(prompt.encode("utf-8"))
     step = pick(args.scenario, args.counter)
     if "sleep" in step:
         time.sleep(step["sleep"])

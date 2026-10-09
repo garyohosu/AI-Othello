@@ -149,6 +149,10 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         pass
 
 
+def _decode(data: bytes | None) -> str:
+    return data.decode("utf-8", errors="replace") if data else ""
+
+
 def run_process(argv: list[str], stdin_text: str, timeout_sec: float, cwd: str) -> ProcResult:
     """プロセスを1回実行する。タイムアウト・Ctrl+C ではプロセスツリーごと終了させる。"""
     start = time.monotonic()
@@ -160,23 +164,24 @@ def run_process(argv: list[str], stdin_text: str, timeout_sec: float, cwd: str) 
     try:
         proc = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            encoding="utf-8", errors="replace", cwd=cwd, **kwargs,
+            cwd=cwd, **kwargs,
         )
     except OSError as exc:
         return ProcResult(argv, "", "", None, time.monotonic() - start, launch_error=str(exc))
     try:
-        stdout, stderr = proc.communicate(stdin_text, timeout=timeout_sec)
+        # 標準入力・出力はバイナリで扱う（テキストモードだと Windows で改行が CRLF に変換される）
+        out_b, err_b = proc.communicate(stdin_text.encode("utf-8"), timeout=timeout_sec)
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
         try:
-            stdout, stderr = proc.communicate(timeout=5)
+            out_b, err_b = proc.communicate(timeout=5)
         except (subprocess.TimeoutExpired, ValueError):
-            stdout, stderr = "", ""
-        return ProcResult(argv, stdout or "", stderr or "", None, time.monotonic() - start, timed_out=True)
+            out_b, err_b = None, None
+        return ProcResult(argv, _decode(out_b), _decode(err_b), None, time.monotonic() - start, timed_out=True)
     except BaseException:
         _kill_tree(proc)
         raise
-    return ProcResult(argv, stdout, stderr, proc.returncode, time.monotonic() - start)
+    return ProcResult(argv, _decode(out_b), _decode(err_b), proc.returncode, time.monotonic() - start)
 
 
 def run_role(role: RoleConfig, prompt: str, values: dict[str, str], cwd: str) -> ProcResult:

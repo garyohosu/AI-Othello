@@ -472,3 +472,67 @@ def test_review_schema():
         with pytest.raises(schema.ReviewSchemaError):
             schema.parse_review(bad)
     assert schema.REVIEW_JSON_SCHEMA["additionalProperties"] is False
+
+
+# ---------------------------------------------------------------- プロンプトの渡し方（標準入力）
+
+EXAMPLE_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "devloop", "config.example.yaml")
+
+
+def _stdin_reviewer_role(tmp_path, prompt_out):
+    work = tmp_path / "stdin_work"
+    work.mkdir(exist_ok=True)
+    (work / "scenario.json").write_text(json.dumps([COMPLETE], ensure_ascii=False), encoding="utf-8")
+    return adapters.RoleConfig(
+        name="reviewer", provider="mock", timeout_sec=30,
+        command=["{python}", REVIEWER, "--scenario", str(work / "scenario.json"),
+                 "--counter", str(work / "counter.txt"), "--prompt-out", str(prompt_out)],
+    )
+
+
+def test_prompt_reaches_child_stdin_byte_exact(tmp_path):
+    # 日本語・改行・記号・絵文字・タブを含み、64KiB を超える長文。cp932 の既定では読めない内容。
+    prompt = "オセロの指示書です。\n改行・記号 !@#$%^&*()「」『』、。\t絵文字 🎲♟\n" * 2000
+    assert len(prompt.encode("utf-8")) > 64 * 1024
+    out = tmp_path / "got.bin"
+    res = adapters.run_role(_stdin_reviewer_role(tmp_path, out), prompt, {}, str(tmp_path))
+    assert res.ok, res.describe_error()
+    assert out.read_bytes() == prompt.encode("utf-8")
+
+
+def test_long_prompt_is_not_passed_in_argv_without_placeholder():
+    prompt = "長文" * 100_000  # 約600KB。引数で渡すと Windows の上限を超える
+    argv, prompt_as_arg = adapters.resolve_argv(["{python}", "-c", "pass"], {"prompt": prompt})
+    assert prompt_as_arg is False
+    assert all(prompt not in a for a in argv)
+    assert max(len(a) for a in argv) < 1000
+
+
+def test_prompt_placeholder_still_passes_as_argument():
+    argv, prompt_as_arg = adapters.resolve_argv(["{python}", "-c", "x", "{prompt}"], {"prompt": "こんにちは"})
+    assert prompt_as_arg is True
+    assert argv[-1] == "こんにちは"
+
+
+def test_prompt_argument_is_rejected_for_cmd_wrapper(tmp_path):
+    shim = tmp_path / "fake-cli.cmd"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    with pytest.raises(adapters.AdapterError):
+        adapters.resolve_argv([str(shim), "{prompt}"], {"prompt": "x"})
+
+
+def test_child_that_ignores_stdin_does_not_hang_or_crash(tmp_path):
+    # 長い入力を受け取らずに終了する子プロセスでも、例外にならず結果として返ること
+    res = adapters.run_role(
+        adapters.RoleConfig(name="reviewer", provider="mock", timeout_sec=30,
+                            command=["{python}", "-c", "import sys; sys.exit(0)"]),
+        "長文" * 300_000, {}, str(tmp_path),
+    )
+    assert res.launch_error is None and not res.timed_out
+
+
+def test_example_claude_command_sends_prompt_via_stdin():
+    cfg = controller.load_config(EXAMPLE_CONFIG)
+    cmd = cfg.implementer.command
+    assert cmd[:2] == ["claude", "-p"]
+    assert not any("{prompt}" in part for part in cmd)

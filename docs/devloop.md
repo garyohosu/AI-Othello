@@ -90,7 +90,11 @@ py -m tools.devloop.controller --repo . --execute --resume
 | `result_required_sections` | [] | 結果報告に必要な文字列 |
 | `implementer` / `reviewer` | | `provider`（mock / claude / codex）、`command`、`timeout_sec` |
 
-`command` のプレースホルダ: `{python}` `{prompt}` `{instruction}` `{result}` `{repo}` `{schema_file}` `{model}`。`{prompt}` がなければプロンプトは標準入力で渡します。npm 製の `.cmd`（codex / gemini）に `{prompt}` を使うと、cmd.exe の引数解釈で壊れるおそれがあるため拒否します。
+`command` のプレースホルダ: `{python}` `{prompt}` `{instruction}` `{result}` `{repo}` `{schema_file}` `{model}`。
+
+- **プロンプトは既定で標準入力に UTF-8 で送ります。** `{prompt}` を `command` に含めた場合だけ引数で渡します。Windows のコマンドライン引数には長さの上限があるため、長文の指示書・差分を含むプロンプトは標準入力を使います。
+- 実装担当（Claude）の設定例は標準入力方式です（`claude -p` に `{prompt}` を入れない）。**Claude 実CLIが標準入力のプロンプトを受け付けるかは未検証です。** モックでは「子プロセスの標準入力に UTF-8 のプロンプトが完全一致で届くこと」だけを確認しています。
+- npm 製の `.cmd`（codex / gemini）に `{prompt}` を使うと、cmd.exe の引数解釈で壊れるおそれがあるため拒否します。
 
 ## レビュー結果のJSON
 出力全体（前後の空白を除く）が次の4項目だけを持つJSONオブジェクトであること。説明文やコードブロックが付いていたら `invalid_review` で停止します。
