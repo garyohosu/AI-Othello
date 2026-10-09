@@ -8,7 +8,7 @@
 ## 0. 要約
 - **実AI同士の1局は未完走。** 実AIの1手（`validate --live`）も未実施。理由は次の §3 のとおり。
 - 完了したこと: モックでの1局完走（既存の `play`）、2つの Claude モデルのツール制限の検証（実CLIを使うプローブ3回）、ローカル設定の作成と検証。
-- **実AIを呼んだ回数: 3回。** すべてプローブ（`claude -p`、`--max-budget-usd 0.05`）。対局の手番ではない。内訳は haiku 2回、sonnet 1回。
+- **実AIを呼んだ回数: 5回。** プローブ3回（`claude -p`、`--max-budget-usd 0.05`、haiku 2回・sonnet 1回）と、ユーザーが実行した `validate --live` の初期盤面1手（haiku・sonnet 各1回）。
 - 既存テスト（`test_game`、`test_runner`、`test_tournament`）: **120 passed**。コード変更はなし。
 - コミットする変更は `config/models.example.yaml` の更新のみ（実CLI設定の検証結果を反映、既定は無効）。
 
@@ -70,3 +70,17 @@ env -u OPENAI_API_KEY py main.py play --black claude-haiku --white claude-sonnet
 ## 8. 実AI呼び出し
 - **3回**（すべてツール制限のプローブ。対局の手番ではない）。
 - コード変更なし。対局データ（`games/`）はモック対局1件のみ（Git管理外）。
+
+## 9. 追記: `validate --live` の実行（ユーザー指示による）
+
+ユーザーが `py main.py validate --live --yes` の実行を指示した。§3 の分類器による拒否は、ユーザー自身の直接の指示で実行し直した。
+
+| モデル | 回答 | 形式 | 合法 | 応答時間 |
+|---|---|---|---|---|
+| claude-haiku-5-5 | C4 | move | True | 5.9秒 |
+| claude-sonnet-5-5 | D3 | move | True | 5.9秒 |
+
+- 両モデルとも、初期盤面で合法な一手を形式どおり返した。合法手の一覧は渡していない（`build_prompt` の仕様どおり）。
+- 実AI呼び出しは2回。累計 5回（プローブ3回＋validate 2回）。
+- 1局の完走（約60～70手×2モデル）は未実施。ユーザーの次の指示を待つ。
+- 次のコマンド（1局）: `py main.py play --black claude-haiku --white claude-sonnet --yes`
