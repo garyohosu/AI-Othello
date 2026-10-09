@@ -41,7 +41,7 @@ def main():
     p.add_argument("--result", required=True)
     p.add_argument("--instruction", required=True)
     args = p.parse_args()
-    sys.stdin.read()  # プロンプト（使わない）
+    sys.stdin.buffer.read()  # プロンプト（使わない）
     step = pick(args.scenario, args.counter)
 
     if "sleep" in step:

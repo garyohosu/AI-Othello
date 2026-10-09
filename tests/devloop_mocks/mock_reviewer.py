@@ -27,7 +27,8 @@ def main():
     p.add_argument("--counter", required=True)
     p.add_argument("--prompt-out")
     args = p.parse_args()
-    prompt = sys.stdin.read()
+    # 親プロセスは標準入力を UTF-8 で書く。Windows の既定（cp932）で読むと文字化けして書き出せない。
+    prompt = sys.stdin.buffer.read().decode("utf-8")
     if args.prompt_out:
         with open(args.prompt_out, "w", encoding="utf-8") as f:
             f.write(prompt)
