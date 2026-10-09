@@ -47,22 +47,33 @@ models:
   # 使う前に README の「実CLIを使う前のチェックリスト」を確認し、ユーザーの承認を得ること。
   # model の値は未確認のプレースホルダ。実在するモデルIDは各CLIで確認して書き換える。
 
-  # Claude Code CLI 2.1.294（Windows: claude.exe）
-  # ヘルプで確認: -p/--print（非対話）、位置引数 prompt、--model、--output-format text|json|stream-json、
-  #   --tools ""（組み込みツールをすべて無効）、--no-session-persistence、--strict-mcp-config、
-  #   --disable-slash-commands、--permission-prompts none、--max-budget-usd（--print 時のみ）
-  # 未確認: 実際にツールが無効になるか、JSON 出力のフィールド名、-p 時に標準入力を読むか
-  #   （位置引数 prompt はヘルプに記載あり。claude.exe は .exe なので {prompt} で渡せる）
-  - id: claude-cheap
+  # Claude Code CLI 2.1.295（Windows: claude.exe）。Result00009 で検証:
+  #   --tools "" で組み込みツールを無効にした状態で「ファイル作成」「コマンド実行」を依頼したところ、
+  #   claude-haiku-5-5 / claude-sonnet-5-5 とも拒否（CANNOT_WRITE / NO_TOOLS）し、ファイルは作成されなかった。
+  #   これはモデルの応答とファイルの有無による確認であり、CLI の仕様としての完全保証ではない。
+  #   実際の対局用 models.yaml は enabled: true にして使う（この例では既定で無効）。
+  - id: claude-haiku
     provider: cli
-    model: "<未確認: 廉価モデルIDまたは別名>"
+    model: "claude-haiku-5-5"
     command: ["claude", "-p", "{prompt}", "--model", "{model}", "--output-format", "text",
               "--tools", "", "--no-session-persistence", "--strict-mcp-config",
               "--disable-slash-commands", "--permission-prompts", "none", "--max-budget-usd", "0.05"]
     version_command: ["claude", "--version"]
     timeout_sec: 120
-    sandbox: unknown
-    sandbox_note: "--tools \"\" で組み込みツール無効（ヘルプ記載）。実際の挙動は未検証"
+    sandbox: restricted
+    sandbox_note: "--tools \"\" で組み込みツール無効。ファイル作成・コマンド実行の依頼が失敗することを確認（Result00009）"
+    enabled: false
+
+  - id: claude-sonnet
+    provider: cli
+    model: "claude-sonnet-5-5"
+    command: ["claude", "-p", "{prompt}", "--model", "{model}", "--output-format", "text",
+              "--tools", "", "--no-session-persistence", "--strict-mcp-config",
+              "--disable-slash-commands", "--permission-prompts", "none", "--max-budget-usd", "0.05"]
+    version_command: ["claude", "--version"]
+    timeout_sec: 120
+    sandbox: restricted
+    sandbox_note: "claude-haiku と同じ CLI フラグ。ファイル作成の依頼が失敗することを確認（Result00009）"
     enabled: false
 
   # Codex CLI 0.161.0（Windows: npm の codex.cmd。{prompt} は使えないので標準入力で渡す）
