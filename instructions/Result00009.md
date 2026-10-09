@@ -1,4 +1,4 @@
-# Result00009 — AIオセロの実CLI1局: 準備と検証まで完了、実対局は未実施（承認拒否）
+# Result00009 — AIオセロ: claude-haiku-5-5 対 claude-sonnet-5-5 の実CLI1局を完走
 
 対応する指示書: [Instruction00009.md](./Instruction00009.md)
 正本: `RequiredSpecifications.md`、`SPEC.md`
@@ -84,3 +84,24 @@ env -u OPENAI_API_KEY py main.py play --black claude-haiku --white claude-sonnet
 - 実AI呼び出しは2回。累計 5回（プローブ3回＋validate 2回）。
 - 1局の完走（約60～70手×2モデル）は未実施。ユーザーの次の指示を待つ。
 - 次のコマンド（1局）: `py main.py play --black claude-haiku --white claude-sonnet --yes`
+
+## 10. 実対局の結果（ユーザー指示 `py main.py play --black claude-haiku --white claude-sonnet --yes`）
+
+- **1局完走。** 終局（通常終局）: 黒 claude-haiku 15 – 白 claude-sonnet 49、**claude-sonnet の勝ち**。
+- 棋譜・ログ: `games/20261010-030714-claude-haiku-vs-claude-sonnet-001/`（Git管理外）。`board.txt`、`moves.jsonl`（63行）、`state.json`。
+- 最終盤面は `board.txt` と石数（●15・〇49・空き0）が `state.json` と一致。盤面の更新はすべてPythonが行った。
+- 判定の内訳（`moves.jsonl`）:
+  - 通常の着手 60、反則 2、PASS 1。
+  - claude-haiku: 33手（反則2）。claude-sonnet: 30手（反則0）。
+  - 反則は両方 `illegal_move`（合法手のない局面で `E3` と答えた1回、合法手 `B7` が1つある局面で `E3` と答えた1回）。累積反則は黒2、白0（上限10に未達）。
+  - 合法手のない局面（move 57、黒）で、haiku は最初 `E3` と答えて反則になり、その後 `PASS` を返した（PASSは正当）。
+  - 技術エラー（タイムアウト・終了コード・認証）は 0。
+- 実AI呼び出しは **63回**（haiku 33、sonnet 30）。
+  - 応答時間の合計は約498秒（1回あたり最大11.4秒）。
+  - 費用: 出力が `text` 形式のため、CLIからの費用実績値は取得していない（`cost_usd` は空）。`--max-budget-usd 0.05` は各呼び出しの上限として指定済み。全体の費用は未確認。
+- 累計の実AI呼び出し: プローブ3回＋`validate --live` 2回＋対局63回 = **68回**。
+
+### 残課題
+- 費用の総額が取得できていない。Claude CLI の `--output-format json` で `total_cost_usd` を取得する方式を次に検討する（`usage_fields` は設定例に記載済み）。
+- 2モデルは同一CLI（Claude）。別会社の対局、Codex・Gemini・Grok の制限検証は未実施。
+- 1局のみ。総当たり・先後交換は未実施。
